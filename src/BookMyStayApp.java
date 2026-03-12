@@ -11,7 +11,7 @@ import java.util.Map;
  * <p>
  * UC3: Centralized Room Inventory Management (HashMap)
  *
- * @author Sharveswar
+ * @author Akash
  * @version 3.0
  */
 public class BookMyStayApp {
