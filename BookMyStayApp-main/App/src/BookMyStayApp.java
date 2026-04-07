@@ -1,11 +1,5 @@
-// Version: 12.0 (Data Persistence & System Recovery)
+// Version: 11.0 (Concurrent Booking Simulation)
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -627,86 +621,6 @@ class ConcurrentBookingProcessor implements Runnable {
     }
 }
 
-// Version: 12.0
-/**
- * Handles reading and writing of room inventory state to a plain-text file.
- * Each line in the file uses the format:   roomType=availableCount
- * Example:
- *   Single=5
- *   Double=3
- *   Suite=2
- *
- * IOException is caught internally in both methods so callers are never
- * forced to handle file errors — the service degrades gracefully instead.
- * This reflects the "failure tolerance" requirement: a missing or unreadable
- * file does not crash the system; it simply starts with the default state.
- */
-class FilePersistenceService {
-
-    /**
-     * Saves room inventory state to a file.
-     * Iterates over the live availability map and writes one
-     * {@code roomType=count} line per entry. A BufferedWriter is used
-     * to minimise the number of underlying write calls.
-     * The file is created if it does not exist; overwritten if it does.
-     *
-     * @param inventory centralized room inventory to persist
-     * @param filePath  path of the target persistence file
-     */
-    public void saveInventory(RoomInventory inventory, String filePath) {
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(filePath))) {
-            for (Map.Entry<String, Integer> entry
-                    : inventory.getRoomAvailability().entrySet()) {
-                writer.write(entry.getKey() + "=" + entry.getValue());
-                writer.newLine();
-            }
-            System.out.println("Inventory saved successfully.");
-        } catch (IOException e) {
-            System.out.println("Failed to save inventory: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Loads room inventory state from a file and restores it into the
-     * provided RoomInventory instance.
-     *
-     * Each line is split on '=' to extract the room type and count.
-     * Lines that do not match the expected format are silently skipped,
-     * providing basic resilience against file corruption.
-     *
-     * If the file does not exist, a friendly message is printed and the
-     * method returns immediately, leaving the inventory at its default
-     * values — this is the "Starting fresh" path in the expected output.
-     *
-     * @param inventory centralized room inventory to restore into
-     * @param filePath  path of the persistence file to read
-     */
-    public void loadInventory(RoomInventory inventory, String filePath) {
-        File file = new File(filePath);
-
-        // Graceful failure: missing file is not an error — it is the normal
-        // state on the very first run before any save has been performed.
-        if (!file.exists()) {
-            System.out.println("No valid inventory data found. Starting fresh.");
-            return;
-        }
-
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String[] parts = line.split("=");
-                // Skip malformed lines to handle partial corruption safely.
-                if (parts.length != 2) continue;
-                String roomType = parts[0].trim();
-                int count       = Integer.parseInt(parts[1].trim());
-                inventory.updateAvailability(roomType, count);
-            }
-        } catch (IOException | NumberFormatException e) {
-            System.out.println("Failed to load inventory: " + e.getMessage());
-        }
-    }
-}
-
 public class BookMyStayApp {
     public static void main(String[] args) {
 
@@ -861,34 +775,5 @@ public class BookMyStayApp {
                 + concurrentInventory.getRoomAvailability().get("Double"));
         System.out.println("Suite: "
                 + concurrentInventory.getRoomAvailability().get("Suite"));
-
-        // ── Use Case 12: Data Persistence & System Recovery ──────────────────
-        System.out.println("\nSystem Recovery");
-
-        // Dedicated inventory and persistence service for this use case.
-        // Using a fresh RoomInventory keeps the demo self-contained and
-        // ensures the default counts (5/3/2) are visible in the output.
-        RoomInventory persistenceInventory = new RoomInventory();
-        FilePersistenceService persistenceService = new FilePersistenceService();
-        String filePath = "inventory.txt";
-
-        // Phase 1 — Simulate application startup / recovery.
-        // On the very first run the file does not exist, so loadInventory
-        // prints the "Starting fresh" message and returns without change.
-        // On a subsequent run it would silently restore the saved counts.
-        persistenceService.loadInventory(persistenceInventory, filePath);
-
-        // Display the current (default) inventory after the recovery attempt.
-        System.out.println("Current Inventory:");
-        System.out.println("Single: "
-                + persistenceInventory.getRoomAvailability().get("Single"));
-        System.out.println("Double: "
-                + persistenceInventory.getRoomAvailability().get("Double"));
-        System.out.println("Suite: "
-                + persistenceInventory.getRoomAvailability().get("Suite"));
-
-        // Phase 2 — Simulate application shutdown.
-        // Serialize the current inventory to file so the next run can recover.
-        persistenceService.saveInventory(persistenceInventory, filePath);
     }
 }
