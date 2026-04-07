@@ -1,0 +1,894 @@
+// Version: 12.0 (Data Persistence & System Recovery)
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Queue;
+import java.util.Scanner;
+import java.util.Set;
+import java.util.Stack;
+
+abstract class Room {
+    private int numberOfBeds;
+    private double size;
+    private double pricePerNight;
+
+    public Room(int numberOfBeds, double size, double pricePerNight) {
+        this.numberOfBeds = numberOfBeds;
+        this.size = size;
+        this.pricePerNight = pricePerNight;
+    }
+
+    public int getNumberOfBeds() { return numberOfBeds; }
+    public double getSize() { return size; }
+    public double getPricePerNight() { return pricePerNight; }
+
+    public abstract String getRoomType();
+
+    public void displayDetails() {
+        System.out.println(getRoomType() + ":");
+        System.out.println("Beds: " + numberOfBeds);
+        System.out.println("Size: " + (int) size + " sqft");
+        System.out.println("Price per night: " + pricePerNight);
+    }
+}
+
+class SingleRoom extends Room {
+    public SingleRoom() { super(1, 250, 1500.0); }
+    @Override
+    public String getRoomType() { return "Single Room"; }
+}
+
+class DoubleRoom extends Room {
+    public DoubleRoom() { super(2, 400, 2500.0); }
+    @Override
+    public String getRoomType() { return "Double Room"; }
+}
+
+class SuiteRoom extends Room {
+    public SuiteRoom() { super(3, 750, 5000.0); }
+    @Override
+    public String getRoomType() { return "Suite Room"; }
+}
+
+// Version: 3.0
+class RoomInventory {
+    private Map<String, Integer> roomAvailability;
+
+    public RoomInventory() {
+        roomAvailability = new HashMap<>();
+        initializeInventory();
+    }
+
+    private void initializeInventory() {
+        roomAvailability.put("Single", 5);
+        roomAvailability.put("Double", 3);
+        roomAvailability.put("Suite", 2);
+    }
+
+    public Map<String, Integer> getRoomAvailability() { return roomAvailability; }
+
+    public void updateAvailability(String roomType, int count) {
+        roomAvailability.put(roomType, count);
+    }
+}
+
+// Version: 4.0
+class RoomSearchService {
+    public void searchAvailableRooms(RoomInventory inventory,
+                                     Room singleRoom, Room doubleRoom, Room suiteRoom) {
+        Map<String, Integer> availability = inventory.getRoomAvailability();
+        System.out.println("Available Rooms:");
+        boolean anyAvailable = false;
+        if (availability.get("Single") > 0) {
+            singleRoom.displayDetails();
+            System.out.println("Available: " + availability.get("Single"));
+            anyAvailable = true;
+        }
+        if (availability.get("Double") > 0) {
+            if (anyAvailable) System.out.println();
+            doubleRoom.displayDetails();
+            System.out.println("Available: " + availability.get("Double"));
+            anyAvailable = true;
+        }
+        if (availability.get("Suite") > 0) {
+            if (anyAvailable) System.out.println();
+            suiteRoom.displayDetails();
+            System.out.println("Available: " + availability.get("Suite"));
+            anyAvailable = true;
+        }
+        if (!anyAvailable) System.out.println("No rooms currently available.");
+    }
+}
+
+// Version: 8.0 — roomId added to carry the assigned room ID into booking history
+// without changing the two-arg constructor used throughout the queue flow.
+class Reservation {
+    private String guestName;
+    private String roomType;
+
+    /**
+     * Assigned room ID, populated by RoomAllocationService after a
+     * successful allocation. Null until the booking is confirmed.
+     */
+    private String roomId;
+
+    public Reservation(String guestName, String roomType) {
+        this.guestName = guestName;
+        this.roomType = roomType;
+    }
+
+    public String getGuestName() { return guestName; }
+    public String getRoomType()  { return roomType;  }
+    public String getRoomId()    { return roomId;    }
+
+    /**
+     * Called by RoomAllocationService once a room ID is generated.
+     * Keeps allocation concerns out of the Reservation constructor.
+     *
+     * @param roomId assigned room ID (e.g. "Single-1")
+     */
+    public void setRoomId(String roomId) { this.roomId = roomId; }
+}
+
+// Version: 5.0
+class BookingRequestQueue {
+    private Queue<Reservation> requestQueue;
+
+    public BookingRequestQueue() { requestQueue = new LinkedList<>(); }
+
+    public void addRequest(Reservation reservation) { requestQueue.offer(reservation); }
+
+    public Reservation getNextRequest() { return requestQueue.poll(); }
+
+    public boolean hasPendingRequests() { return !requestQueue.isEmpty(); }
+}
+
+// Version: 6.1 — allocateRoom now returns the assigned room ID so callers
+// can use it (e.g. for add-on service mapping) without exposing internal state.
+class RoomAllocationService {
+    /**
+     * Stores all allocated room IDs to prevent duplicate assignments.
+     */
+    private Set<String> allocatedRoomIds;
+
+    /**
+     * Stores assigned room IDs by room type.
+     * Key -> Room type | Value -> Set of assigned room IDs
+     */
+    private Map<String, Set<String>> assignedRoomsByType;
+
+    /** Initializes allocation tracking structures. */
+    public RoomAllocationService() {
+        allocatedRoomIds = new HashSet<>();
+        assignedRoomsByType = new HashMap<>();
+    }
+
+    /**
+     * Confirms a booking request by assigning a unique room ID and updating inventory.
+     *
+     * @param reservation booking request
+     * @param inventory   centralized room inventory
+     * @return assigned room ID, or null if allocation failed
+     */
+    public String allocateRoom(Reservation reservation, RoomInventory inventory) {
+        String roomType = reservation.getRoomType();
+        Map<String, Integer> availability = inventory.getRoomAvailability();
+
+        int available = availability.getOrDefault(roomType, 0);
+        if (available <= 0) {
+            System.out.println("Booking failed for Guest: " + reservation.getGuestName()
+                    + " - No availability for " + roomType);
+            return null;
+        }
+
+        String roomId = generateRoomId(roomType);
+        allocatedRoomIds.add(roomId);
+
+        assignedRoomsByType.computeIfAbsent(roomType, k -> new HashSet<>()).add(roomId);
+
+        inventory.updateAvailability(roomType, available - 1);
+
+        // Stamp the assigned ID onto the reservation so it travels into
+        // BookingHistory as a self-contained, fully-described record.
+        reservation.setRoomId(roomId);
+
+        System.out.println("Booking confirmed for Guest: " + reservation.getGuestName()
+                + ", Room ID: " + roomId);
+
+        return roomId;
+    }
+
+    /**
+     * Generates a unique room ID for the given room type.
+     *
+     * @param roomType type of room
+     * @return unique room ID
+     */
+    private String generateRoomId(String roomType) {
+        int count = assignedRoomsByType.containsKey(roomType)
+                ? assignedRoomsByType.get(roomType).size() + 1
+                : 1;
+        return roomType + "-" + count;
+    }
+}
+
+// Version: 7.0
+/**
+ * Represents an optional service a guest can attach to a reservation.
+ * Modeled as a standalone value object — no dependency on Room or Reservation.
+ */
+class AddOnService {
+    /**
+     * Name of the service.
+     */
+    private String serviceName;
+
+    /**
+     * Cost of the service.
+     */
+    private double cost;
+
+    /**
+     * Creates a new add-on service.
+     *
+     * @param serviceName name of the service
+     * @param cost        cost of the service
+     */
+    public AddOnService(String serviceName, double cost) {
+        this.serviceName = serviceName;
+        this.cost = cost;
+    }
+
+    /**
+     * @return service name
+     */
+    public String getServiceName() { return serviceName; }
+
+    /**
+     * @return service cost
+     */
+    public double getCost() { return cost; }
+}
+
+// Version: 7.0
+/**
+ * Manages the one-to-many relationship between reservations and their add-on services.
+ * Operates independently of RoomInventory and RoomAllocationService so that
+ * optional features never touch core booking state.
+ */
+class AddOnServiceManager {
+    /**
+     * Maps reservation ID to selected services.
+     *
+     * Key   -> Reservation ID (e.g. "Single-1")
+     * Value -> List of selected add-on services (insertion order preserved)
+     */
+    private Map<String, List<AddOnService>> servicesByReservation;
+
+    /**
+     * Initializes the service manager with an empty mapping.
+     */
+    public AddOnServiceManager() {
+        servicesByReservation = new HashMap<>();
+    }
+
+    /**
+     * Attaches a service to a reservation.
+     * Uses computeIfAbsent so the list is created lazily on first access,
+     * keeping the map free of empty entries until a service is actually added.
+     *
+     * @param reservationId confirmed reservation ID (returned by allocateRoom)
+     * @param service       add-on service to attach
+     */
+    public void addService(String reservationId, AddOnService service) {
+        servicesByReservation
+                .computeIfAbsent(reservationId, k -> new ArrayList<>())
+                .add(service);
+    }
+
+    /**
+     * Calculates total add-on cost for a reservation by summing
+     * the cost of every attached service.
+     *
+     * @param reservationId reservation ID
+     * @return total service cost, or 0.0 if no services are attached
+     */
+    public double calculateTotalServiceCost(String reservationId) {
+        List<AddOnService> services = servicesByReservation.get(reservationId);
+        if (services == null) return 0.0;
+
+        double total = 0.0;
+        for (AddOnService service : services) {
+            total += service.getCost();
+        }
+        return total;
+    }
+}
+
+// Version: 8.0
+/**
+ * Maintains an ordered audit trail of confirmed reservations.
+ * Uses ArrayList to preserve insertion order, which naturally reflects
+ * the chronological sequence in which bookings were confirmed.
+ * Read operations are exposed; no mutation of stored records is permitted.
+ */
+class BookingHistory {
+    /**
+     * List that stores confirmed reservations in insertion order.
+     */
+    private List<Reservation> confirmedReservations;
+
+    /**
+     * Initializes an empty booking history.
+     */
+    public BookingHistory() { confirmedReservations = new ArrayList<>(); }
+
+    /**
+     * Adds a confirmed reservation to booking history.
+     * Called immediately after a successful allocation so the record is
+     * captured before any further processing occurs.
+     *
+     * @param reservation confirmed booking (roomId already set)
+     */
+    public void addReservation(Reservation reservation) {
+        confirmedReservations.add(reservation);
+    }
+
+    /**
+     * Returns all confirmed reservations.
+     * Callers receive the live list reference; reporting logic must
+     * treat this as read-only to satisfy the immutability requirement.
+     *
+     * @return list of reservations in confirmation order
+     */
+    public List<Reservation> getConfirmedReservations() {
+        return confirmedReservations;
+    }
+}
+
+// Version: 8.0
+/**
+ * Generates human-readable reports from booking history.
+ * Holds no state of its own — all data comes from BookingHistory,
+ * so reporting never modifies or reprocesses live booking flows.
+ */
+class BookingReportService {
+    /**
+     * Displays a summary report of all confirmed bookings.
+     * Iterates the history list in insertion order, printing each
+     * reservation's guest name, room type, and assigned room ID.
+     * The history list is not modified during report generation.
+     *
+     * @param history booking history containing confirmed reservations
+     */
+    public void generateReport(BookingHistory history) {
+        List<Reservation> reservations = history.getConfirmedReservations();
+        System.out.println("Booking History Report");
+        for (Reservation reservation : reservations) {
+            System.out.println("Guest: " + reservation.getGuestName()
+                    + ", Room Type: " + reservation.getRoomType());
+        }
+    }
+}
+
+// Version: 9.0
+/**
+ * Domain-specific exception representing an invalid booking scenario.
+ * Extends Exception (checked) so callers are forced to handle or
+ * declare it, making error paths explicit in every call site.
+ */
+class InvalidBookingException extends Exception {
+    /**
+     * Creates an exception with a descriptive error message.
+     *
+     * @param message error description
+     */
+    public InvalidBookingException(String message) { super(message); }
+}
+
+// Version: 9.0
+/**
+ * Validates booking input and system state before a reservation is processed.
+ * Applies fail-fast design: the first violated rule throws immediately,
+ * preventing any further processing on invalid data.
+ */
+class ReservationValidator {
+
+    /**
+     * Valid room types accepted by the system.
+     * Exact case match is required — "single" and "SINGLE" are both rejected.
+     */
+    private static final List<String> VALID_ROOM_TYPES =
+            List.of("Single", "Double", "Suite");
+
+    /**
+     * Validates booking input provided by the guest.
+     * Checks are applied in order: guest name → room type → availability.
+     * The first failure throws immediately (fail-fast).
+     *
+     * @param guestName name of the guest
+     * @param roomType  requested room type (must be exactly Single, Double, or Suite)
+     * @param inventory centralized inventory used for availability check
+     * @throws InvalidBookingException if any validation rule is violated
+     */
+    public void validate(String guestName,
+                         String roomType,
+                         RoomInventory inventory) throws InvalidBookingException {
+
+        // Rule 1 — Guest name must not be blank.
+        if (guestName == null || guestName.trim().isEmpty()) {
+            throw new InvalidBookingException("Guest name cannot be empty.");
+        }
+
+        // Rule 2 — Room type must exactly match one of the accepted values.
+        // Case-sensitive: "single" and "SUITE" are invalid inputs.
+        if (!VALID_ROOM_TYPES.contains(roomType)) {
+            throw new InvalidBookingException("Invalid room type selected.");
+        }
+
+        // Rule 3 — Requested room type must have available inventory.
+        int available = inventory.getRoomAvailability().getOrDefault(roomType, 0);
+        if (available <= 0) {
+            throw new InvalidBookingException(
+                    "No rooms available for type: " + roomType);
+        }
+    }
+}
+
+// Version: 10.0
+/**
+ * Handles booking cancellations and safe inventory rollback.
+ * Uses a Stack to track released room IDs in LIFO order, naturally
+ * modelling undo behaviour — the most recent cancellation surfaces first.
+ * Operates independently of BookingHistory and RoomAllocationService so
+ * that rollback logic never reaches into unrelated system concerns.
+ */
+class CancellationService {
+
+    /**
+     * Stack that stores recently released room IDs.
+     * LIFO order ensures the most recent cancellation is shown first
+     * when rollback history is displayed.
+     */
+    private Stack<String> releasedRoomIds;
+
+    /**
+     * Maps reservation ID to its room type.
+     * Required during cancellation to know which inventory counter to increment.
+     * Populated by registerBooking at confirmation time.
+     *
+     * Key   -> Reservation ID (e.g. "Single-1")
+     * Value -> Room type     (e.g. "Single")
+     */
+    private Map<String, String> reservationRoomTypeMap;
+
+    /**
+     * Initializes cancellation tracking structures.
+     */
+    public CancellationService() {
+        releasedRoomIds       = new Stack<>();
+        reservationRoomTypeMap = new HashMap<>();
+    }
+
+    /**
+     * Registers a confirmed booking so it can later be cancelled.
+     * Must be called immediately after a successful allocation so the
+     * service holds the data it needs for a valid rollback.
+     *
+     * @param reservationId confirmed reservation ID (e.g. "Single-1")
+     * @param roomType      allocated room type     (e.g. "Single")
+     */
+    public void registerBooking(String reservationId, String roomType) {
+        reservationRoomTypeMap.put(reservationId, roomType);
+    }
+
+    /**
+     * Cancels a confirmed booking and restores inventory safely.
+     * Performs rollback in a strict order:
+     *   1. Validate the reservation exists and is not already cancelled.
+     *   2. Resolve the room type from the reservation map.
+     *   3. Push the reservation ID onto the rollback stack.
+     *   4. Remove the entry from the map to prevent duplicate cancellations.
+     *   5. Increment inventory for the released room type.
+     *
+     * @param reservationId reservation to cancel
+     * @param inventory     centralized room inventory
+     */
+    public void cancelBooking(String reservationId, RoomInventory inventory) {
+        // Step 1 — Reject if the reservation was never registered or was already cancelled.
+        if (!reservationRoomTypeMap.containsKey(reservationId)) {
+            System.out.println("Cancellation failed: Reservation "
+                    + reservationId + " not found or already cancelled.");
+            return;
+        }
+
+        // Step 2 — Resolve room type before mutating state.
+        String roomType = reservationRoomTypeMap.get(reservationId);
+
+        // Step 3 — Record the release on the rollback stack (LIFO).
+        releasedRoomIds.push(reservationId);
+
+        // Step 4 — Remove from the active map; prevents duplicate cancellation.
+        reservationRoomTypeMap.remove(reservationId);
+
+        // Step 5 — Restore inventory count for the released room type.
+        int current = inventory.getRoomAvailability().getOrDefault(roomType, 0);
+        inventory.updateAvailability(roomType, current + 1);
+
+        System.out.println("Booking cancelled successfully. "
+                + "Inventory restored for room type: " + roomType);
+    }
+
+    /**
+     * Displays recently cancelled reservations in LIFO order.
+     * Pops each entry from the stack so the most recent cancellation
+     * is always shown first, visualising true rollback ordering.
+     * Once displayed, the stack is fully drained.
+     */
+    public void showRollbackHistory() {
+        System.out.println("Rollback History (Most Recent First):");
+        while (!releasedRoomIds.isEmpty()) {
+            System.out.println("Released Reservation ID: " + releasedRoomIds.pop());
+        }
+    }
+}
+
+// Version: 11.0
+/**
+ * Processes booking requests from a shared queue in a multi-threaded environment.
+ * Implements Runnable so the same processing logic can be executed by any number
+ * of threads without subclassing Thread, keeping the design flexible.
+ *
+ * Thread safety is enforced at two distinct critical sections:
+ *   1. Queue access   — synchronized on bookingQueue (one thread dequeues at a time).
+ *   2. Allocation     — synchronized on inventory    (one thread allocates at a time).
+ *
+ * Separating the two locks avoids holding a broad lock across both operations,
+ * which would reduce concurrency unnecessarily.
+ */
+class ConcurrentBookingProcessor implements Runnable {
+
+    /**
+     * Shared booking request queue accessed by all processor threads.
+     */
+    private BookingRequestQueue bookingQueue;
+
+    /**
+     * Shared room inventory mutated during allocation.
+     */
+    private RoomInventory inventory;
+
+    /**
+     * Shared allocation service whose internal state must also be protected.
+     */
+    private RoomAllocationService allocationService;
+
+    /**
+     * Creates a new booking processor with references to all shared resources.
+     *
+     * @param bookingQueue    shared booking queue
+     * @param inventory       shared room inventory
+     * @param allocationService shared allocation service
+     */
+    public ConcurrentBookingProcessor(BookingRequestQueue bookingQueue,
+                                      RoomInventory inventory,
+                                      RoomAllocationService allocationService) {
+        this.bookingQueue    = bookingQueue;
+        this.inventory       = inventory;
+        this.allocationService = allocationService;
+    }
+
+    /**
+     * Continuously dequeues and processes booking requests until the queue
+     * is empty. Each iteration uses two separate synchronized blocks:
+     *
+     * Block 1 (bookingQueue): Safely retrieves the next pending request.
+     *   - hasPendingRequests and getNextRequest are checked atomically so
+     *     two threads cannot both see a non-empty queue and dequeue the
+     *     same reservation.
+     *   - If no request is pending the loop exits cleanly.
+     *
+     * Block 2 (inventory): Safely allocates the room and updates the count.
+     *   - Held only for the duration of the allocation, not across the
+     *     dequeue step, so threads can overlap their queue checks.
+     */
+    @Override
+    public void run() {
+        while (true) {
+            Reservation reservation;
+
+            // Critical section 1 — dequeue one request atomically.
+            // Declared outside so it is visible to the allocation block below.
+            synchronized (bookingQueue) {
+                if (!bookingQueue.hasPendingRequests()) {
+                    break; // Queue exhausted; this thread's work is done.
+                }
+                reservation = bookingQueue.getNextRequest();
+            }
+
+            // Critical section 2 — allocate the room atomically.
+            // Synchronizing on inventory prevents two threads from reading
+            // the same availability count and both decrementing it,
+            // which would silently over-allocate rooms.
+            synchronized (inventory) {
+                allocationService.allocateRoom(reservation, inventory);
+            }
+        }
+    }
+}
+
+// Version: 12.0
+/**
+ * Handles reading and writing of room inventory state to a plain-text file.
+ * Each line in the file uses the format:   roomType=availableCount
+ * Example:
+ *   Single=5
+ *   Double=3
+ *   Suite=2
+ *
+ * IOException is caught internally in both methods so callers are never
+ * forced to handle file errors — the service degrades gracefully instead.
+ * This reflects the "failure tolerance" requirement: a missing or unreadable
+ * file does not crash the system; it simply starts with the default state.
+ */
+class FilePersistenceService {
+
+    /**
+     * Saves room inventory state to a file.
+     * Iterates over the live availability map and writes one
+     * {@code roomType=count} line per entry. A BufferedWriter is used
+     * to minimise the number of underlying write calls.
+     * The file is created if it does not exist; overwritten if it does.
+     *
+     * @param inventory centralized room inventory to persist
+     * @param filePath  path of the target persistence file
+     */
+    public void saveInventory(RoomInventory inventory, String filePath) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(filePath))) {
+            for (Map.Entry<String, Integer> entry
+                    : inventory.getRoomAvailability().entrySet()) {
+                writer.write(entry.getKey() + "=" + entry.getValue());
+                writer.newLine();
+            }
+            System.out.println("Inventory saved successfully.");
+        } catch (IOException e) {
+            System.out.println("Failed to save inventory: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Loads room inventory state from a file and restores it into the
+     * provided RoomInventory instance.
+     *
+     * Each line is split on '=' to extract the room type and count.
+     * Lines that do not match the expected format are silently skipped,
+     * providing basic resilience against file corruption.
+     *
+     * If the file does not exist, a friendly message is printed and the
+     * method returns immediately, leaving the inventory at its default
+     * values — this is the "Starting fresh" path in the expected output.
+     *
+     * @param inventory centralized room inventory to restore into
+     * @param filePath  path of the persistence file to read
+     */
+    public void loadInventory(RoomInventory inventory, String filePath) {
+        File file = new File(filePath);
+
+        // Graceful failure: missing file is not an error — it is the normal
+        // state on the very first run before any save has been performed.
+        if (!file.exists()) {
+            System.out.println("No valid inventory data found. Starting fresh.");
+            return;
+        }
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split("=");
+                // Skip malformed lines to handle partial corruption safely.
+                if (parts.length != 2) continue;
+                String roomType = parts[0].trim();
+                int count       = Integer.parseInt(parts[1].trim());
+                inventory.updateAvailability(roomType, count);
+            }
+        } catch (IOException | NumberFormatException e) {
+            System.out.println("Failed to load inventory: " + e.getMessage());
+        }
+    }
+}
+
+public class BookMyStayApp {
+    public static void main(String[] args) {
+
+        // ── Use Case 6: Room Allocation Processing ──────────────────────────
+        System.out.println("Room Allocation Processing");
+
+        RoomInventory inventory = new RoomInventory();
+        BookingRequestQueue bookingQueue = new BookingRequestQueue();
+        RoomAllocationService allocationService = new RoomAllocationService();
+        BookingHistory bookingHistory = new BookingHistory();
+        CancellationService cancellationService = new CancellationService();
+
+        bookingQueue.addRequest(new Reservation("Abhi", "Single"));
+        bookingQueue.addRequest(new Reservation("Subha", "Double"));
+        bookingQueue.addRequest(new Reservation("Vanmathi", "Suite"));
+
+        // Capture the room ID for "Abhi" so it can be used in Use Case 7.
+        // Successful allocations are recorded in booking history (UC8) and
+        // registered with CancellationService (UC10) in the same pass.
+        String abhiRoomId = null;
+        while (bookingQueue.hasPendingRequests()) {
+            Reservation next = bookingQueue.getNextRequest();
+            String assignedId = allocationService.allocateRoom(next, inventory);
+            if (assignedId != null) {
+                bookingHistory.addReservation(next);
+                cancellationService.registerBooking(assignedId, next.getRoomType());
+                if ("Abhi".equals(next.getGuestName())) {
+                    abhiRoomId = assignedId;
+                }
+            }
+        }
+
+        // ── Use Case 7: Add-On Service Selection ────────────────────────────
+        System.out.println("\nAdd-On Service Selection");
+
+        AddOnServiceManager serviceManager = new AddOnServiceManager();
+
+        // Guest selects optional services for their confirmed reservation.
+        // Core booking and inventory state are not touched here.
+        serviceManager.addService(abhiRoomId, new AddOnService("Breakfast", 500.0));
+        serviceManager.addService(abhiRoomId, new AddOnService("Airport Transfer", 1000.0));
+
+        System.out.println("Reservation ID: " + abhiRoomId);
+        System.out.println("Total Add-On Cost: "
+                + serviceManager.calculateTotalServiceCost(abhiRoomId));
+
+        // ── Use Case 8: Booking History & Reporting ──────────────────────────
+        System.out.println("\nBooking History and Reporting");
+        BookingReportService reportService = new BookingReportService();
+        reportService.generateReport(bookingHistory);
+
+        // ── Use Case 9: Error Handling & Validation ───────────────────────────
+        System.out.println("\nBooking Validation");
+        Scanner scanner = new Scanner(System.in);
+        RoomInventory validationInventory = new RoomInventory();
+        ReservationValidator validator = new ReservationValidator();
+        try {
+            System.out.print("Enter guest name: ");
+            String guestName = scanner.nextLine();
+
+            System.out.print("Enter room type (Single/Double/Suite): ");
+            String roomType = scanner.nextLine();
+
+            // Validate before touching any booking or inventory state.
+            // If validation fails, the exception is thrown here and the
+            // catch block handles it — no reservation is created.
+            validator.validate(guestName, roomType, validationInventory);
+
+            // Validation passed — safe to queue and process the booking.
+            BookingRequestQueue validationQueue = new BookingRequestQueue();
+            RoomAllocationService validationAllocator = new RoomAllocationService();
+            validationQueue.addRequest(new Reservation(guestName, roomType));
+            while (validationQueue.hasPendingRequests()) {
+                validationAllocator.allocateRoom(
+                        validationQueue.getNextRequest(), validationInventory);
+            }
+        } catch (InvalidBookingException e) {
+            // Domain-specific validation error: display the message and
+            // allow the application to continue running safely.
+            System.out.println("Booking failed: " + e.getMessage());
+        } finally {
+            scanner.close();
+        }
+
+        // ── Use Case 10: Booking Cancellation & Inventory Rollback ───────────
+        System.out.println("\nBooking Cancellation");
+
+        // Use Case 10 demonstrates rollback in isolation using a dedicated
+        // inventory instance starting at default counts (Single = 5).
+        // Cancelling Single-1 increments Single from 5 to 6, proving
+        // inventory is correctly restored beyond its pre-allocation baseline.
+        RoomInventory cancellationInventory = new RoomInventory();
+        CancellationService cancellationDemo = new CancellationService();
+        cancellationDemo.registerBooking("Single-1", "Single");
+
+        // cancelBooking validates existence, pushes to rollback stack,
+        // removes from active map, and restores inventory — in that order.
+        cancellationDemo.cancelBooking("Single-1", cancellationInventory);
+
+        // Display cancelled reservations in LIFO order (most recent first).
+        cancellationDemo.showRollbackHistory();
+
+        // Confirm the inventory count was correctly restored after cancellation.
+        int restoredCount = cancellationInventory.getRoomAvailability().get("Single");
+        System.out.println("Updated Single Room Availability: " + restoredCount);
+
+        // ── Use Case 11: Concurrent Booking Simulation ───────────────────────
+        System.out.println("\nConcurrent Booking Simulation");
+
+        // Fresh shared resources — isolated from all earlier use cases so
+        // inventory counts reflect only the allocations made in this section.
+        RoomInventory concurrentInventory      = new RoomInventory();
+        BookingRequestQueue concurrentQueue    = new BookingRequestQueue();
+        RoomAllocationService concurrentAllocator = new RoomAllocationService();
+
+        // Four guests submit requests simultaneously (simulated by pre-loading
+        // the queue before threads start, then letting both threads race to
+        // drain it). Room types are chosen to match the expected output.
+        concurrentQueue.addRequest(new Reservation("Abhi",     "Single"));
+        concurrentQueue.addRequest(new Reservation("Vanmathi", "Double"));
+        concurrentQueue.addRequest(new Reservation("Kural",    "Suite"));
+        concurrentQueue.addRequest(new Reservation("Subha",    "Single"));
+
+        // Two threads represent two concurrent users hitting the booking
+        // system at the same time. Each runs the same Runnable, sharing
+        // the queue, inventory, and allocator via synchronized blocks.
+        Thread t1 = new Thread(
+                new ConcurrentBookingProcessor(
+                        concurrentQueue, concurrentInventory, concurrentAllocator));
+        Thread t2 = new Thread(
+                new ConcurrentBookingProcessor(
+                        concurrentQueue, concurrentInventory, concurrentAllocator));
+
+        t1.start();
+        t2.start();
+
+        // join() blocks main until both threads finish, ensuring the inventory
+        // snapshot below is taken only after all allocations are complete.
+        try {
+            t1.join();
+            t2.join();
+        } catch (InterruptedException e) {
+            System.out.println("Thread execution interrupted.");
+        }
+
+        // Print remaining inventory in a fixed order so the output is
+        // deterministic regardless of thread scheduling.
+        System.out.println("Remaining Inventory:");
+        System.out.println("Single: "
+                + concurrentInventory.getRoomAvailability().get("Single"));
+        System.out.println("Double: "
+                + concurrentInventory.getRoomAvailability().get("Double"));
+        System.out.println("Suite: "
+                + concurrentInventory.getRoomAvailability().get("Suite"));
+
+        // ── Use Case 12: Data Persistence & System Recovery ──────────────────
+        System.out.println("\nSystem Recovery");
+
+        // Dedicated inventory and persistence service for this use case.
+        // Using a fresh RoomInventory keeps the demo self-contained and
+        // ensures the default counts (5/3/2) are visible in the output.
+        RoomInventory persistenceInventory = new RoomInventory();
+        FilePersistenceService persistenceService = new FilePersistenceService();
+        String filePath = "inventory.txt";
+
+        // Phase 1 — Simulate application startup / recovery.
+        // On the very first run the file does not exist, so loadInventory
+        // prints the "Starting fresh" message and returns without change.
+        // On a subsequent run it would silently restore the saved counts.
+        persistenceService.loadInventory(persistenceInventory, filePath);
+
+        // Display the current (default) inventory after the recovery attempt.
+        System.out.println("Current Inventory:");
+        System.out.println("Single: "
+                + persistenceInventory.getRoomAvailability().get("Single"));
+        System.out.println("Double: "
+                + persistenceInventory.getRoomAvailability().get("Double"));
+        System.out.println("Suite: "
+                + persistenceInventory.getRoomAvailability().get("Suite"));
+
+        // Phase 2 — Simulate application shutdown.
+        // Serialize the current inventory to file so the next run can recover.
+        persistenceService.saveInventory(persistenceInventory, filePath);
+    }
+}
