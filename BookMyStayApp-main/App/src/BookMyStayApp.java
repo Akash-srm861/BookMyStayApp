@@ -1,5 +1,6 @@
-// Version: 5.1 (refactored)
+// Version: 11.0 (Concurrent Booking Simulation)
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
@@ -143,19 +144,127 @@ class BookingRequestQueue {
      * Adds a booking request to the queue.
      * @param reservation booking request
      */
-    public void addRequest(Reservation reservation) { requestQueue.offer(reservation); }
+    public void cancelBooking(String reservationId, RoomInventory inventory) {
+        // Step 1 — Reject if the reservation was never registered or was already cancelled.
+        if (!reservationRoomTypeMap.containsKey(reservationId)) {
+            System.out.println("Cancellation failed: Reservation "
+                    + reservationId + " not found or already cancelled.");
+            return;
+        }
+
+        // Step 2 — Resolve room type before mutating state.
+        String roomType = reservationRoomTypeMap.get(reservationId);
+
+        // Step 3 — Record the release on the rollback stack (LIFO).
+        releasedRoomIds.push(reservationId);
+
+        // Step 4 — Remove from the active map; prevents duplicate cancellation.
+        reservationRoomTypeMap.remove(reservationId);
+
+        // Step 5 — Restore inventory count for the released room type.
+        int current = inventory.getRoomAvailability().getOrDefault(roomType, 0);
+        inventory.updateAvailability(roomType, current + 1);
+
+        System.out.println("Booking cancelled successfully. "
+                + "Inventory restored for room type: " + roomType);
+    }
 
     /**
-     * Retrieves and removes the next booking request from the queue.
-     * @return next reservation request
+     * Displays recently cancelled reservations in LIFO order.
+     * Pops each entry from the stack so the most recent cancellation
+     * is always shown first, visualising true rollback ordering.
+     * Once displayed, the stack is fully drained.
      */
-    public Reservation getNextRequest() { return requestQueue.poll(); }
+    public void showRollbackHistory() {
+        System.out.println("Rollback History (Most Recent First):");
+        while (!releasedRoomIds.isEmpty()) {
+            System.out.println("Released Reservation ID: " + releasedRoomIds.pop());
+        }
+    }
+}
+
+// Version: 11.0
+/**
+ * Processes booking requests from a shared queue in a multi-threaded environment.
+ * Implements Runnable so the same processing logic can be executed by any number
+ * of threads without subclassing Thread, keeping the design flexible.
+ *
+ * Thread safety is enforced at two distinct critical sections:
+ *   1. Queue access   — synchronized on bookingQueue (one thread dequeues at a time).
+ *   2. Allocation     — synchronized on inventory    (one thread allocates at a time).
+ *
+ * Separating the two locks avoids holding a broad lock across both operations,
+ * which would reduce concurrency unnecessarily.
+ */
+class ConcurrentBookingProcessor implements Runnable {
 
     /**
-     * Checks whether there are pending booking requests.
-     * @return true if queue is not empty
+     * Shared booking request queue accessed by all processor threads.
      */
-    public boolean hasPendingRequests() { return !requestQueue.isEmpty(); }
+    private BookingRequestQueue bookingQueue;
+
+    /**
+     * Shared room inventory mutated during allocation.
+     */
+    private RoomInventory inventory;
+
+    /**
+     * Shared allocation service whose internal state must also be protected.
+     */
+    private RoomAllocationService allocationService;
+
+    /**
+     * Creates a new booking processor with references to all shared resources.
+     *
+     * @param bookingQueue    shared booking queue
+     * @param inventory       shared room inventory
+     * @param allocationService shared allocation service
+     */
+    public ConcurrentBookingProcessor(BookingRequestQueue bookingQueue,
+                                      RoomInventory inventory,
+                                      RoomAllocationService allocationService) {
+        this.bookingQueue    = bookingQueue;
+        this.inventory       = inventory;
+        this.allocationService = allocationService;
+    }
+
+    /**
+     * Continuously dequeues and processes booking requests until the queue
+     * is empty. Each iteration uses two separate synchronized blocks:
+     *
+     * Block 1 (bookingQueue): Safely retrieves the next pending request.
+     *   - hasPendingRequests and getNextRequest are checked atomically so
+     *     two threads cannot both see a non-empty queue and dequeue the
+     *     same reservation.
+     *   - If no request is pending the loop exits cleanly.
+     *
+     * Block 2 (inventory): Safely allocates the room and updates the count.
+     *   - Held only for the duration of the allocation, not across the
+     *     dequeue step, so threads can overlap their queue checks.
+     */
+    @Override
+    public void run() {
+        while (true) {
+            Reservation reservation;
+
+            // Critical section 1 — dequeue one request atomically.
+            // Declared outside so it is visible to the allocation block below.
+            synchronized (bookingQueue) {
+                if (!bookingQueue.hasPendingRequests()) {
+                    break; // Queue exhausted; this thread's work is done.
+                }
+                reservation = bookingQueue.getNextRequest();
+            }
+
+            // Critical section 2 — allocate the room atomically.
+            // Synchronizing on inventory prevents two threads from reading
+            // the same availability count and both decrementing it,
+            // which would silently over-allocate rooms.
+            synchronized (inventory) {
+                allocationService.allocateRoom(reservation, inventory);
+            }
+        }
+    }
 }
 
 public class BookMyStayApp {
@@ -172,9 +281,14 @@ public class BookMyStayApp {
         bookingQueue.addRequest(r2);
         bookingQueue.addRequest(r3);
 
-        while (bookingQueue.hasPendingRequests()) {
-            Reservation r = bookingQueue.getNextRequest();
-            System.out.println("Guest: " + r.getGuestName() + " | Room Type: " + r.getRoomType());
-        }
+        // Print remaining inventory in a fixed order so the output is
+        // deterministic regardless of thread scheduling.
+        System.out.println("Remaining Inventory:");
+        System.out.println("Single: "
+                + concurrentInventory.getRoomAvailability().get("Single"));
+        System.out.println("Double: "
+                + concurrentInventory.getRoomAvailability().get("Double"));
+        System.out.println("Suite: "
+                + concurrentInventory.getRoomAvailability().get("Suite"));
     }
 }
