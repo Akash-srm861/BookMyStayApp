@@ -1,10 +1,9 @@
-// Version: 9.0 (Error Handling & Validation)
+// Version: 8.0 (Booking History & Reporting)
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
-import java.util.Scanner;
 import java.util.Set;
 
 abstract class Room {
@@ -374,70 +373,6 @@ class BookingReportService {
     }
 }
 
-// Version: 9.0
-/**
- * Domain-specific exception representing an invalid booking scenario.
- * Extends Exception (checked) so callers are forced to handle or
- * declare it, making error paths explicit in every call site.
- */
-class InvalidBookingException extends Exception {
-    /**
-     * Creates an exception with a descriptive error message.
-     *
-     * @param message error description
-     */
-    public InvalidBookingException(String message) { super(message); }
-}
-
-// Version: 9.0
-/**
- * Validates booking input and system state before a reservation is processed.
- * Applies fail-fast design: the first violated rule throws immediately,
- * preventing any further processing on invalid data.
- */
-class ReservationValidator {
-
-    /**
-     * Valid room types accepted by the system.
-     * Exact case match is required — "single" and "SINGLE" are both rejected.
-     */
-    private static final List<String> VALID_ROOM_TYPES =
-            List.of("Single", "Double", "Suite");
-
-    /**
-     * Validates booking input provided by the guest.
-     * Checks are applied in order: guest name → room type → availability.
-     * The first failure throws immediately (fail-fast).
-     *
-     * @param guestName name of the guest
-     * @param roomType  requested room type (must be exactly Single, Double, or Suite)
-     * @param inventory centralized inventory used for availability check
-     * @throws InvalidBookingException if any validation rule is violated
-     */
-    public void validate(String guestName,
-                         String roomType,
-                         RoomInventory inventory) throws InvalidBookingException {
-
-        // Rule 1 — Guest name must not be blank.
-        if (guestName == null || guestName.trim().isEmpty()) {
-            throw new InvalidBookingException("Guest name cannot be empty.");
-        }
-
-        // Rule 2 — Room type must exactly match one of the accepted values.
-        // Case-sensitive: "single" and "SUITE" are invalid inputs.
-        if (!VALID_ROOM_TYPES.contains(roomType)) {
-            throw new InvalidBookingException("Invalid room type selected.");
-        }
-
-        // Rule 3 — Requested room type must have available inventory.
-        int available = inventory.getRoomAvailability().getOrDefault(roomType, 0);
-        if (available <= 0) {
-            throw new InvalidBookingException(
-                    "No rooms available for type: " + roomType);
-        }
-    }
-}
-
 public class BookMyStayApp {
     public static void main(String[] args) {
         Room[] rooms = { new SingleRoom(), new DoubleRoom(), new SuiteRoom() };
@@ -486,38 +421,5 @@ public class BookMyStayApp {
         System.out.println("\nBooking History and Reporting");
         BookingReportService reportService = new BookingReportService();
         reportService.generateReport(bookingHistory);
-
-        // ── Use Case 9: Error Handling & Validation ───────────────────────────
-        System.out.println("\nBooking Validation");
-        Scanner scanner = new Scanner(System.in);
-        RoomInventory validationInventory = new RoomInventory();
-        ReservationValidator validator = new ReservationValidator();
-        try {
-            System.out.print("Enter guest name: ");
-            String guestName = scanner.nextLine();
-
-            System.out.print("Enter room type (Single/Double/Suite): ");
-            String roomType = scanner.nextLine();
-
-            // Validate before touching any booking or inventory state.
-            // If validation fails, the exception is thrown here and the
-            // catch block handles it — no reservation is created.
-            validator.validate(guestName, roomType, validationInventory);
-
-            // Validation passed — safe to queue and process the booking.
-            BookingRequestQueue validationQueue = new BookingRequestQueue();
-            RoomAllocationService validationAllocator = new RoomAllocationService();
-            validationQueue.addRequest(new Reservation(guestName, roomType));
-            while (validationQueue.hasPendingRequests()) {
-                validationAllocator.allocateRoom(
-                        validationQueue.getNextRequest(), validationInventory);
-            }
-        } catch (InvalidBookingException e) {
-            // Domain-specific validation error: display the message and
-            // allow the application to continue running safely.
-            System.out.println("Booking failed: " + e.getMessage());
-        } finally {
-            scanner.close();
-        }
     }
 }
