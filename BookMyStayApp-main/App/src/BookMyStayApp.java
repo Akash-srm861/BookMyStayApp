@@ -2,9 +2,6 @@
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
@@ -36,18 +33,21 @@ abstract class Room {
 
 class SingleRoom extends Room {
     public SingleRoom() { super(1, 250, 1500.0); }
+
     @Override
     public String getRoomType() { return "Single Room"; }
 }
 
 class DoubleRoom extends Room {
     public DoubleRoom() { super(2, 400, 2500.0); }
+
     @Override
     public String getRoomType() { return "Double Room"; }
 }
 
 class SuiteRoom extends Room {
     public SuiteRoom() { super(3, 750, 5000.0); }
+
     @Override
     public String getRoomType() { return "Suite Room"; }
 }
@@ -375,9 +375,10 @@ class BookingReportService {
 
 public class BookMyStayApp {
     public static void main(String[] args) {
+        Room[] rooms = { new SingleRoom(), new DoubleRoom(), new SuiteRoom() };
+        RoomInventory inventory = new RoomInventory();
 
-        // ── Use Case 6: Room Allocation Processing ──────────────────────────
-        System.out.println("Room Allocation Processing");
+        System.out.println("Hotel Room Inventory");
 
         RoomInventory inventory = new RoomInventory();
         BookingRequestQueue bookingQueue = new BookingRequestQueue();
