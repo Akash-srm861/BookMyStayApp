@@ -2,14 +2,7 @@
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
-import java.util.Queue;
-import java.util.Scanner;
-import java.util.Set;
-import java.util.Stack;
 
 abstract class Room {
     private int numberOfBeds;
@@ -38,18 +31,21 @@ abstract class Room {
 
 class SingleRoom extends Room {
     public SingleRoom() { super(1, 250, 1500.0); }
+
     @Override
     public String getRoomType() { return "Single Room"; }
 }
 
 class DoubleRoom extends Room {
     public DoubleRoom() { super(2, 400, 2500.0); }
+
     @Override
     public String getRoomType() { return "Double Room"; }
 }
 
 class SuiteRoom extends Room {
     public SuiteRoom() { super(3, 750, 5000.0); }
+
     @Override
     public String getRoomType() { return "Suite Room"; }
 }
@@ -539,34 +535,15 @@ class CancellationService {
 
 public class BookMyStayApp {
     public static void main(String[] args) {
-
-        // ── Use Case 6: Room Allocation Processing ──────────────────────────
-        System.out.println("Room Allocation Processing");
-
+        Room[] rooms = { new SingleRoom(), new DoubleRoom(), new SuiteRoom() };
         RoomInventory inventory = new RoomInventory();
-        BookingRequestQueue bookingQueue = new BookingRequestQueue();
-        RoomAllocationService allocationService = new RoomAllocationService();
-        BookingHistory bookingHistory = new BookingHistory();
-        CancellationService cancellationService = new CancellationService();
 
-        bookingQueue.addRequest(new Reservation("Abhi", "Single"));
-        bookingQueue.addRequest(new Reservation("Subha", "Double"));
-        bookingQueue.addRequest(new Reservation("Vanmathi", "Suite"));
+        System.out.println("Hotel Room Inventory");
 
-        // Capture the room ID for "Abhi" so it can be used in Use Case 7.
-        // Successful allocations are recorded in booking history (UC8) and
-        // registered with CancellationService (UC10) in the same pass.
-        String abhiRoomId = null;
-        while (bookingQueue.hasPendingRequests()) {
-            Reservation next = bookingQueue.getNextRequest();
-            String assignedId = allocationService.allocateRoom(next, inventory);
-            if (assignedId != null) {
-                bookingHistory.addReservation(next);
-                cancellationService.registerBooking(assignedId, next.getRoomType());
-                if ("Abhi".equals(next.getGuestName())) {
-                    abhiRoomId = assignedId;
-                }
-            }
+        for (int i = 0; i < rooms.length; i++) {
+            if (i > 0) System.out.println();
+            rooms[i].displayDetails();
+            System.out.println("Available: " + inventory.getRoomAvailability().get(rooms[i].getRoomType()));
         }
 
         // ── Use Case 7: Add-On Service Selection ────────────────────────────
