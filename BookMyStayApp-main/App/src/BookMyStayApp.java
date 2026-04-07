@@ -1,4 +1,4 @@
-// Version: 8.0 (Booking History & Reporting)
+// Version: 7.0 (Add-On Service Selection)
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -102,17 +102,10 @@ class RoomSearchService {
     }
 }
 
-// Version: 8.0 — roomId added to carry the assigned room ID into booking history
-// without changing the two-arg constructor used throughout the queue flow.
+// Version: 5.0
 class Reservation {
     private String guestName;
     private String roomType;
-
-    /**
-     * Assigned room ID, populated by RoomAllocationService after a
-     * successful allocation. Null until the booking is confirmed.
-     */
-    private String roomId;
 
     public Reservation(String guestName, String roomType) {
         this.guestName = guestName;
@@ -120,16 +113,7 @@ class Reservation {
     }
 
     public String getGuestName() { return guestName; }
-    public String getRoomType()  { return roomType;  }
-    public String getRoomId()    { return roomId;    }
-
-    /**
-     * Called by RoomAllocationService once a room ID is generated.
-     * Keeps allocation concerns out of the Reservation constructor.
-     *
-     * @param roomId assigned room ID (e.g. "Single-1")
-     */
-    public void setRoomId(String roomId) { this.roomId = roomId; }
+    public String getRoomType() { return roomType; }
 }
 
 // Version: 5.0
@@ -189,10 +173,6 @@ class RoomAllocationService {
         assignedRoomsByType.computeIfAbsent(roomType, k -> new HashSet<>()).add(roomId);
 
         inventory.updateAvailability(roomType, available - 1);
-
-        // Stamp the assigned ID onto the reservation so it travels into
-        // BookingHistory as a self-contained, fully-described record.
-        reservation.setRoomId(roomId);
 
         System.out.println("Booking confirmed for Guest: " + reservation.getGuestName()
                 + ", Room ID: " + roomId);
@@ -307,72 +287,6 @@ class AddOnServiceManager {
     }
 }
 
-// Version: 8.0
-/**
- * Maintains an ordered audit trail of confirmed reservations.
- * Uses ArrayList to preserve insertion order, which naturally reflects
- * the chronological sequence in which bookings were confirmed.
- * Read operations are exposed; no mutation of stored records is permitted.
- */
-class BookingHistory {
-    /**
-     * List that stores confirmed reservations in insertion order.
-     */
-    private List<Reservation> confirmedReservations;
-
-    /**
-     * Initializes an empty booking history.
-     */
-    public BookingHistory() { confirmedReservations = new ArrayList<>(); }
-
-    /**
-     * Adds a confirmed reservation to booking history.
-     * Called immediately after a successful allocation so the record is
-     * captured before any further processing occurs.
-     *
-     * @param reservation confirmed booking (roomId already set)
-     */
-    public void addReservation(Reservation reservation) {
-        confirmedReservations.add(reservation);
-    }
-
-    /**
-     * Returns all confirmed reservations.
-     * Callers receive the live list reference; reporting logic must
-     * treat this as read-only to satisfy the immutability requirement.
-     *
-     * @return list of reservations in confirmation order
-     */
-    public List<Reservation> getConfirmedReservations() {
-        return confirmedReservations;
-    }
-}
-
-// Version: 8.0
-/**
- * Generates human-readable reports from booking history.
- * Holds no state of its own — all data comes from BookingHistory,
- * so reporting never modifies or reprocesses live booking flows.
- */
-class BookingReportService {
-    /**
-     * Displays a summary report of all confirmed bookings.
-     * Iterates the history list in insertion order, printing each
-     * reservation's guest name, room type, and assigned room ID.
-     * The history list is not modified during report generation.
-     *
-     * @param history booking history containing confirmed reservations
-     */
-    public void generateReport(BookingHistory history) {
-        List<Reservation> reservations = history.getConfirmedReservations();
-        System.out.println("Booking History Report");
-        for (Reservation reservation : reservations) {
-            System.out.println("Guest: " + reservation.getGuestName()
-                    + ", Room Type: " + reservation.getRoomType());
-        }
-    }
-}
-
 public class BookMyStayApp {
     public static void main(String[] args) {
         Room[] rooms = { new SingleRoom(), new DoubleRoom(), new SuiteRoom() };
@@ -383,23 +297,19 @@ public class BookMyStayApp {
         RoomInventory inventory = new RoomInventory();
         BookingRequestQueue bookingQueue = new BookingRequestQueue();
         RoomAllocationService allocationService = new RoomAllocationService();
-        BookingHistory bookingHistory = new BookingHistory();
 
         bookingQueue.addRequest(new Reservation("Abhi", "Single"));
-        bookingQueue.addRequest(new Reservation("Subha", "Double"));
+        bookingQueue.addRequest(new Reservation("Subha", "Single"));
         bookingQueue.addRequest(new Reservation("Vanmathi", "Suite"));
 
         // Capture the room ID for "Abhi" so it can be used in Use Case 7.
-        // Successful allocations are also recorded in booking history for Use Case 8.
+        // allocateRoom now returns the assigned ID (null on failure).
         String abhiRoomId = null;
         while (bookingQueue.hasPendingRequests()) {
             Reservation next = bookingQueue.getNextRequest();
             String assignedId = allocationService.allocateRoom(next, inventory);
-            if (assignedId != null) {
-                bookingHistory.addReservation(next);
-                if ("Abhi".equals(next.getGuestName())) {
-                    abhiRoomId = assignedId;
-                }
+            if ("Abhi".equals(next.getGuestName())) {
+                abhiRoomId = assignedId;
             }
         }
 
@@ -416,10 +326,5 @@ public class BookMyStayApp {
         System.out.println("Reservation ID: " + abhiRoomId);
         System.out.println("Total Add-On Cost: "
                 + serviceManager.calculateTotalServiceCost(abhiRoomId));
-
-        // ── Use Case 8: Booking History & Reporting ──────────────────────────
-        System.out.println("\nBooking History and Reporting");
-        BookingReportService reportService = new BookingReportService();
-        reportService.generateReport(bookingHistory);
     }
 }
